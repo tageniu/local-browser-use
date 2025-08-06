@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import time
+import requests
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
@@ -30,8 +31,8 @@ load_dotenv()
 # ============================================================================
 
 # LLM Provider configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()  # "ollama" or "groq"
-MODEL_NAME = os.getenv("MODEL_NAME", "qwen3:32b")  # qwen3:32b, gpt-oss:20b, or gpt-oss:120b
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()  # "ollama" or "groq"
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-oss:20b")  # qwen3:32b, gpt-oss:20b, or gpt-oss:120b
 
 # Provider-specific configuration
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -61,7 +62,7 @@ RETRY_ATTEMPTS = 3
 THINK_TIME = 0.5  # Seconds to wait between actions
 
 # Logging configuration
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 logger.remove()
 logger.add(sys.stderr, level=LOG_LEVEL)
 
@@ -427,19 +428,55 @@ What should I do next? Respond with JSON."""
                 result = json.loads(completion.choices[0].message.content)
                 
             else:
-                # Call ollama (existing code)
-                response = self.client.chat(
-                    model=self.model,
-                    messages=[
+                # Call ollama with streaming
+                logger.debug(f"Calling Ollama model: {self.model}")
+                logger.debug(f"Prompt length: {len(prompt)} characters")
+                
+                # Simple approach like test.py - use requests directly
+                payload = {
+                    "model": self.model,
+                    "messages": [
                         {"role": "system", "content": self.create_system_prompt()},
                         {"role": "user", "content": prompt}
                     ],
-                    format="json",
-                    options={"temperature": 0.7}
-                )
+                    "stream": True,
+                    "options": {"temperature": 0.7}
+                }
                 
-                # Parse response
-                result = json.loads(response['message']['content'])
+                logger.info("LLM Response:")
+                full_response = ""
+                
+                # Stream and output tokens
+                r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, stream=True, timeout=120)
+                for line in r.iter_lines():
+                    if line:
+                        data = json.loads(line.decode())
+                        
+                        if 'message' in data:
+                            message = data['message']
+                            content = message.get('content', '')
+                            thinking_content = message.get('thinking', '')
+                            
+                            # Output thinking tokens
+                            if thinking_content:
+                                print(thinking_content, end='', flush=True)
+                            
+                            # Output response tokens
+                            if content:
+                                full_response += content
+                                print(content, end='', flush=True)
+                
+                print()  # Add newline after streaming completes
+                
+                # Debug: check what we received
+                logger.debug(f"Full response length: {len(full_response)}")
+                logger.debug(f"Full response: {full_response[:500]}...")
+                
+                if not full_response.strip():
+                    raise ValueError("Empty response from Ollama")
+                
+                # Parse the complete response
+                result = json.loads(full_response)
             
             action = AgentAction(**result)
             

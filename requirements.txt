@@ -9,3 +9,8 @@ loguru>=0.7.0
 python-dotenv>=1.0.0
 groq==0.31.0
 requests==2.32.4
+
+# optional for vision    
+mlx-vlm==0.3.2
+torch==2.7.1
+torchvision==0.22.1
