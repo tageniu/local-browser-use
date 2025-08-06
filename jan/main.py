@@ -31,7 +31,7 @@ load_dotenv()
 
 # LLM Provider configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()  # "ollama" or "groq"
-MODEL_NAME = os.getenv("MODEL_NAME", "qwen3:32b")  # qwen3:32b, gpt-oss:20b, or gpt-oss:120b
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-oss:120b")  # qwen3:32b, gpt-oss:20b, or gpt-oss:120b
 
 # Provider-specific configuration
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
