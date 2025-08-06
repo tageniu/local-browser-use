@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "steps": 4,
+  "history": [
+    "Step 1: ActionType.TYPE on element [7] with value: WebVoyager benchmark - Success",
+    "Step 2: ActionType.CLICK on element [8] - Success",
+    "Step 3: ActionType.WAIT - Success",
+    "Step 4: ActionType.DONE - Success"
+  ],
+  "final_url": "https://www.google.com/",
+  "extracted_data": null
+}

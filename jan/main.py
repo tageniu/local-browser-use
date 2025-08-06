@@ -18,6 +18,7 @@ from pathlib import Path
 from patchright.async_api import async_playwright, Page, Browser, BrowserContext
 from pydantic import BaseModel, Field
 import ollama
+from groq import Groq
 from loguru import logger
 from dotenv import load_dotenv
 
@@ -28,9 +29,20 @@ load_dotenv()
 # Configuration Section (nanoGPT style)
 # ============================================================================
 
-# Model configuration
-MODEL_NAME = os.getenv("MODEL_NAME", "qwen3:32b")  # or "gpt-oss:20b"
+# LLM Provider configuration
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()  # "ollama" or "groq"
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen3:32b")  # qwen3:32b, gpt-oss:20b, or gpt-oss:120b
+
+# Provider-specific configuration
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
+# Model mapping for Groq (maps Ollama model names to Groq model names)
+GROQ_MODEL_MAP = {
+    "qwen3:32b": "qwen/qwen3-32b",
+    "gpt-oss:20b": "openai/gpt-oss-20b",
+    "gpt-oss:120b": "openai/gpt-oss-120b"
+}
 
 # Browser configuration
 HEADLESS = False  # Set to True for production
@@ -339,12 +351,22 @@ class BrowserController:
 # ============================================================================
 
 class LLMReasoner:
-    """Handles LLM interactions using ollama"""
+    """Handles LLM interactions using ollama or groq"""
     
-    def __init__(self, model: str = MODEL_NAME):
-        self.model = model
-        self.client = ollama.Client(host=OLLAMA_HOST)
-        logger.info(f"Using model: {model}")
+    def __init__(self, model: str = MODEL_NAME, provider: str = LLM_PROVIDER):
+        self.provider = provider
+        
+        if provider == "groq":
+            if not GROQ_API_KEY:
+                raise ValueError("GROQ_API_KEY not found in environment variables")
+            self.client = Groq(api_key=GROQ_API_KEY)
+            # Map model name to Groq model format
+            self.model = GROQ_MODEL_MAP.get(model, model)
+            logger.info(f"Using Groq with model: {self.model}")
+        else:
+            self.client = ollama.Client(host=OLLAMA_HOST)
+            self.model = model  # Ollama uses model names directly
+            logger.info(f"Using Ollama with model: {self.model}")
     
     def create_system_prompt(self) -> str:
         """Create system prompt for the agent"""
@@ -385,19 +407,40 @@ Previous Actions:
 What should I do next? Respond with JSON."""
         
         try:
-            # Call ollama
-            response = self.client.chat(
-                model=self.model,
-                messages=[
+            if self.provider == "groq":
+                # Call Groq API
+                messages = [
                     {"role": "system", "content": self.create_system_prompt()},
                     {"role": "user", "content": prompt}
-                ],
-                format="json",
-                options={"temperature": 0.7}
-            )
+                ]
+                
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_completion_tokens=1024,
+                    top_p=1,
+                    response_format={"type": "json_object"}  # Groq JSON mode
+                )
+                
+                # Extract response
+                result = json.loads(completion.choices[0].message.content)
+                
+            else:
+                # Call ollama (existing code)
+                response = self.client.chat(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.create_system_prompt()},
+                        {"role": "user", "content": prompt}
+                    ],
+                    format="json",
+                    options={"temperature": 0.7}
+                )
+                
+                # Parse response
+                result = json.loads(response['message']['content'])
             
-            # Parse response
-            result = json.loads(response['message']['content'])
             action = AgentAction(**result)
             
             logger.info(f"LLM decided: {action.action} - {action.reasoning[:100]}...")
@@ -579,21 +622,29 @@ async def main():
         logger.info(f"Results saved to {output_file}")
 
 if __name__ == "__main__":
-    # Check if ollama is available
-    try:
-        client = ollama.Client(host=OLLAMA_HOST)
-        models = client.list()
-        logger.info(f"Available models: {[m.model for m in models.models]}")
-        
-        # Check if our model is available
-        model_names = [m.model for m in models.models]
-        if not any(MODEL_NAME in name for name in model_names):
-            logger.warning(f"Model {MODEL_NAME} not found. Please run: ollama pull {MODEL_NAME}")
+    # Check LLM provider availability
+    if LLM_PROVIDER == "groq":
+        if not GROQ_API_KEY:
+            logger.error("GROQ_API_KEY not found in environment variables")
+            logger.error("Please set GROQ_API_KEY in your .env file")
             sys.exit(1)
-    except Exception as e:
-        logger.error(f"Cannot connect to ollama: {e}")
-        logger.error("Please ensure ollama is running: ollama serve")
-        sys.exit(1)
+        logger.info(f"Using Groq provider with model: {GROQ_MODEL_MAP.get(MODEL_NAME, MODEL_NAME)}")
+    else:
+        # Check if ollama is available
+        try:
+            client = ollama.Client(host=OLLAMA_HOST)
+            models = client.list()
+            logger.info(f"Available models: {[m.model for m in models.models]}")
+            
+            # Check if our model is available
+            model_names = [m.model for m in models.models]
+            if not any(MODEL_NAME in name for name in model_names):
+                logger.warning(f"Model {MODEL_NAME} not found. Please run: ollama pull {MODEL_NAME}")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"Cannot connect to ollama: {e}")
+            logger.error("Please ensure ollama is running: ollama serve")
+            sys.exit(1)
     
     # Run the agent
     asyncio.run(main())
