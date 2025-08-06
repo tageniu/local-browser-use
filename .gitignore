@@ -1,5 +1,7 @@
 not_relevant/
 other/
+jan/reproducibility/results/
+jan/not_needed/
 # Python
 __pycache__/
 *.py[cod]

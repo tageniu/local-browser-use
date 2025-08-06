@@ -76,10 +76,10 @@ INCLUDE_ATTRIBUTES = ["id", "class", "href", "title", "alt", "placeholder", "val
 #   2. Actionable elements map with Chain-of-Thought reasoning about what each element does
 
 # Agent configuration
-MAX_STEPS = 30
+MAX_STEPS = 42
 TIMEOUT_MS = 30000  # 30 seconds
 RETRY_ATTEMPTS = 3
-THINK_TIME = 0.5  # Seconds to wait between actions
+THINK_TIME = 3  # Seconds to wait between actions
 
 # Logging configuration
 LOG_LEVEL = "INFO"
