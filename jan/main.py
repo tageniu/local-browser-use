@@ -79,7 +79,7 @@ INCLUDE_ATTRIBUTES = ["id", "class", "href", "title", "alt", "placeholder", "val
 MAX_STEPS = 42
 TIMEOUT_MS = 30000  # 30 seconds
 RETRY_ATTEMPTS = 3
-THINK_TIME = 3  # Seconds to wait between actions
+WAIT_BETWEEN_ACTIONS_TIME = 5  # Seconds to wait between actions
 
 # Logging configuration
 LOG_LEVEL = "INFO"
@@ -370,7 +370,7 @@ class BrowserController:
         try:
             # Try to click using XPath
             await self.page.click(f'xpath={element.xpath}', timeout=5000)
-            await asyncio.sleep(THINK_TIME)
+            await asyncio.sleep(WAIT_BETWEEN_ACTIONS_TIME)
             return True
         except Exception as e:
             logger.error(f"Click failed: {e}")
@@ -395,7 +395,7 @@ class BrowserController:
         try:
             # Clear existing text and type new
             await self.page.fill(f'xpath={element.xpath}', text)
-            await asyncio.sleep(THINK_TIME)
+            await asyncio.sleep(WAIT_BETWEEN_ACTIONS_TIME)
             return True
         except Exception as e:
             logger.error(f"Type failed: {e}")
@@ -408,7 +408,7 @@ class BrowserController:
                 await self.page.evaluate(f"window.scrollBy(0, {amount})")
             else:
                 await self.page.evaluate(f"window.scrollBy(0, -{amount})")
-            await asyncio.sleep(THINK_TIME)
+            await asyncio.sleep(WAIT_BETWEEN_ACTIONS_TIME)
             return True
         except Exception as e:
             logger.error(f"Scroll failed: {e}")
@@ -677,7 +677,7 @@ class BrowserAgent:
                     break
                 
                 # Wait between actions
-                await asyncio.sleep(THINK_TIME)
+                await asyncio.sleep(WAIT_BETWEEN_ACTIONS_TIME)
             
             # Prepare result
             result["steps"] = self.step_count
