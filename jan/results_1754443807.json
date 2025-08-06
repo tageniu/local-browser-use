@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "steps": 3,
+  "history": [
+    "Step 1: ActionType.TYPE on element [7] with value: WebVoyager benchmark - Success",
+    "Step 2: ActionType.CLICK on element [12] - Success",
+    "Step 3: ActionType.DONE - Success"
+  ],
+  "final_url": "https://www.google.com/search?q=WebVoyager+benchmark&sca_esv=7d0b40d4ccf1baac&source=hp&ei=7a-SaMf_OYmxkPIPnuOH0As&iflsig=AOw8s4IAAAAAaJK9_Yej0X9UKvrnJAKuRB2knms3chEO&ved=0ahUKEwiHquKnhPWOAxWJGEQIHZ7xAboQ4dUDCBA&oq=WebVoyager+benchmark&gs_lp=Egdnd3Mtd2l6IhRXZWJWb3lhZ2VyIGJlbmNobWFyazIFEAAYgAQyBhAAGBYYHjIIEAAYgAQYogQyBRAAGO8FMgUQABjvBTIFEAAY7wVItmBQAFgAcAB4AJABAJgB-wSgAfsEqgEDNS0xuAEMyAEA-AEBmAIBoAKCBZgDAJIHAzUtMaAHhASyBwM1LTG4B4IFwgcDMi0xyAcF&sclient=gws-wiz&sei=CbCSaK6oNeSr0PEPjreO6Q4",
+  "extracted_data": null
+}

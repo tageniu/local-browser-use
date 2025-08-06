@@ -1,0 +1,32 @@
+[project]
+name = "browser-agent"
+version = "0.1.0"
+description = "Simple browser automation agent inspired by nanoGPT"
+requires-python = ">=3.11"
+dependencies = [
+    "patchright>=1.52.0",
+    "ollama>=0.4.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    "Pillow>=10.0.0",
+    "pydantic>=2.0.0",
+    "orjson>=3.9.0",
+    "loguru>=0.7.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ty>=0.0.1a16",
+]
+
+[tool.ty]
+# Ty uses different configuration format
+# See: https://github.com/astral-sh/ty
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["*.py", "**/*.py"]
+exclude = [".venv/**", "__pycache__/**"]
