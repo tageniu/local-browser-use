@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
 import argparse
+import uuid
 
 # Add parent directory to path to import main
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -21,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TaskRunner:
     """Runs individual WebVoyager tasks using main.py"""
     
-    def __init__(self, task_data: Dict[str, Any], results_dir: str, max_retries: int = 3):
+    def __init__(self, task_data: Dict[str, Any], results_dir: str, max_retries: int = 3, detailed_logs_dir: Optional[str] = None, run_name: Optional[str] = None):
         self.task = task_data
         self.task_id = task_data['id']
         self.question = task_data['ques']
@@ -29,9 +30,16 @@ class TaskRunner:
         self.web_name = task_data['web_name']
         self.results_dir = Path(results_dir)
         self.max_retries = max_retries
+        self.detailed_logs_dir = Path(detailed_logs_dir) if detailed_logs_dir else None
+        self.run_name = run_name or "webvoyager_run"
+        
+        # Generate trace ID for this task
+        self.trace_id = str(uuid.uuid4())
         
         # Ensure results directory exists
         self.results_dir.mkdir(parents=True, exist_ok=True)
+        if self.detailed_logs_dir:
+            self.detailed_logs_dir.mkdir(parents=True, exist_ok=True)
         
     async def run_task(self) -> Dict[str, Any]:
         """Execute the task and return results"""
@@ -105,7 +113,19 @@ async def run_webvoyager_task():
     task_description = """{self.question}"""
     start_url = """{self.start_url}"""
     
-    agent = original_main.BrowserAgent(task=task_description)
+    # Enable detailed logging if directory is provided
+    detailed_logs_dir = {repr(str(self.detailed_logs_dir)) if self.detailed_logs_dir else 'None'}
+    enable_logging = detailed_logs_dir is not None
+    
+    # Use Langfuse tracing instead of file logging when possible
+    agent = original_main.BrowserAgent(
+        task=task_description,
+        enable_detailed_logging=enable_logging,
+        log_base_dir=detailed_logs_dir,
+        trace_id="{self.trace_id}",
+        session_id="{self.run_name}",
+        user_id="{self.task_id}"
+    )
     result = await agent.run(start_url=start_url)
     
     # Print result as JSON for parsing
@@ -170,6 +190,9 @@ if __name__ == "__main__":
                     task_result.get("final_url", "") != self.start_url
                 )
                 
+                # Add trace ID to result for reference
+                task_result["langfuse_trace_id"] = self.trace_id
+                
                 # Check for various failure modes
                 failure_reason = None
                 success = task_result.get("success", False)
@@ -194,7 +217,8 @@ if __name__ == "__main__":
                     "browser_grounded": browser_grounded,
                     "history": task_result.get("history", []),
                     "crashed": False,
-                    "failure_reason": failure_reason
+                    "failure_reason": failure_reason,
+                    "langfuse_trace_id": self.trace_id
                 }
             else:
                 # Could not parse output, check for errors
@@ -226,6 +250,8 @@ async def main():
     parser.add_argument('--task-json', required=True, help='JSON string of the task')
     parser.add_argument('--results-dir', default='results/raw', help='Directory to save results')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum retries on crash')
+    parser.add_argument('--detailed-logs-dir', help='Directory for detailed action logs')
+    parser.add_argument('--run-name', help='Name for this run (used for Langfuse session ID)')
     
     args = parser.parse_args()
     
@@ -233,7 +259,7 @@ async def main():
     task_data = json.loads(args.task_json)
     
     # Create runner
-    runner = TaskRunner(task_data, args.results_dir, args.max_retries)
+    runner = TaskRunner(task_data, args.results_dir, args.max_retries, args.detailed_logs_dir, args.run_name)
     
     # Run task
     print(f"[TaskRunner] Starting task {task_data['id']}: {task_data['ques'][:80]}...")

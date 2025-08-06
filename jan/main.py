@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple Browser Automation Agent
-Inspired by nanoGPT's simplicity and Browser-Use/Notte's effectiveness
+Inspired by nanoGPT's simplicity
 """
 
 import asyncio
@@ -9,7 +9,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
@@ -21,9 +21,23 @@ import ollama
 from groq import Groq
 from loguru import logger
 from dotenv import load_dotenv
+from langfuse.openai import openai as langfuse_openai
 
 # Load environment variables
 load_dotenv()
+
+# Langfuse will be auto-initialized when using langfuse_openai
+langfuse_enabled = False
+try:
+    # Test if Langfuse credentials are available
+    test_client = langfuse_openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.getenv("GROQ_API_KEY", "test")
+    )
+    langfuse_enabled = True
+    logger.info("Langfuse tracing enabled for LLM calls")
+except Exception as e:
+    logger.warning(f"Langfuse initialization failed, continuing without tracing: {e}")
 
 # ============================================================================
 # Configuration Section (nanoGPT style)
@@ -51,8 +65,15 @@ VIEWPORT_HEIGHT = 800
 USER_AGENT = None  # Use default
 
 # DOM extraction configuration
-MAX_ELEMENTS = 100  # Maximum interactive elements to extract
+MAX_ELEMENTS = 150  # Maximum interactive elements to extract
 INCLUDE_ATTRIBUTES = ["id", "class", "href", "title", "alt", "placeholder", "value", "type"]
+
+# DOM observation configuration (for debugging what the AI sees)
+# Set SAVE_DOM_TO_FILE=true in .env to save DOM snapshots to files
+# Set MAX_DOM_ELEMENTS_TO_SHOW=100 in .env to show more elements (default: 50)
+# The LLM now receives:
+#   1. Full DOM structure (hierarchical view of the page)
+#   2. Actionable elements map with Chain-of-Thought reasoning about what each element does
 
 # Agent configuration
 MAX_STEPS = 30
@@ -89,12 +110,86 @@ class DOMElement:
     is_visible: bool = True
     is_clickable: bool = False
     is_input: bool = False
+    parent_text: str = ""  # Context from parent element
+    aria_label: str = ""   # Accessibility label
 
     def to_string(self) -> str:
         """Convert to LLM-friendly string representation"""
         text_preview = self.text[:50] + "..." if len(self.text) > 50 else self.text
         element_type = "input" if self.is_input else "button" if self.is_clickable else self.tag
-        return f"[{self.index}] {element_type}: {text_preview}"
+        
+        # Include relevant attributes
+        attrs = []
+        if self.attributes.get('id'):
+            attrs.append(f"id='{self.attributes['id']}'")
+        if self.attributes.get('class'):
+            attrs.append(f"class='{self.attributes['class'][:30]}...'")
+        if self.attributes.get('href'):
+            attrs.append(f"href='{self.attributes['href'][:50]}...'")
+        if self.attributes.get('placeholder'):
+            attrs.append(f"placeholder='{self.attributes['placeholder']}'")
+        
+        attrs_str = f" ({', '.join(attrs)})" if attrs else ""
+        
+        return f"[{self.index}] {element_type}: {text_preview}{attrs_str}"
+    
+    def get_action_reasoning(self) -> str:
+        """Generate reasoning about what this element does"""
+        reasoning = []
+        
+        # Determine element purpose
+        if self.is_input:
+            input_type = self.attributes.get('type', 'text')
+            placeholder = self.attributes.get('placeholder', '')
+            name = self.attributes.get('name', '')
+            
+            if input_type == 'search' or 'search' in placeholder.lower() or 'search' in name.lower():
+                reasoning.append("This is a search input field")
+            elif input_type == 'email' or 'email' in placeholder.lower():
+                reasoning.append("This is an email input field")
+            elif input_type == 'password':
+                reasoning.append("This is a password input field")
+            else:
+                reasoning.append(f"This is a {input_type} input field")
+            
+            if placeholder:
+                reasoning.append(f"expecting: '{placeholder}'")
+        
+        elif self.tag == 'a' and self.attributes.get('href'):
+            href = self.attributes.get('href', '')
+            if href.startswith('http'):
+                domain = href.split('/')[2] if len(href.split('/')) > 2 else 'external site'
+                reasoning.append(f"This link navigates to {domain}")
+            elif href.startswith('#'):
+                reasoning.append("This link navigates to a section on the current page")
+            elif href == '#' or href == 'javascript:void(0)':
+                reasoning.append("This link triggers a JavaScript action")
+            else:
+                reasoning.append(f"This link navigates to {href}")
+        
+        elif self.is_clickable:
+            # Analyze button text and context
+            text_lower = self.text.lower()
+            if 'submit' in text_lower or 'send' in text_lower:
+                reasoning.append("This button submits a form")
+            elif 'search' in text_lower:
+                reasoning.append("This button triggers a search")
+            elif 'sign in' in text_lower or 'log in' in text_lower:
+                reasoning.append("This button initiates login")
+            elif 'sign up' in text_lower or 'register' in text_lower:
+                reasoning.append("This button starts registration")
+            elif 'next' in text_lower:
+                reasoning.append("This button proceeds to the next step")
+            elif 'back' in text_lower or 'previous' in text_lower:
+                reasoning.append("This button goes back")
+            else:
+                reasoning.append(f"This button performs action: '{self.text}'")
+        
+        # Add aria-label insight if available
+        if self.aria_label:
+            reasoning.append(f"Accessibility: '{self.aria_label}'")
+        
+        return " | ".join(reasoning) if reasoning else "Purpose unclear from context"
 
 @dataclass
 class BrowserState:
@@ -102,17 +197,54 @@ class BrowserState:
     url: str
     title: str
     elements: List[DOMElement]
+    full_dom: str = ""  # Full DOM structure
     screenshot: Optional[bytes] = None
     
     def to_prompt_string(self) -> str:
         """Convert state to prompt-friendly format"""
-        elements_str = "\n".join([e.to_string() for e in self.elements[:50]])  # Limit elements
+        # Get max elements to show from environment or use default
+        max_show = int(os.getenv("MAX_DOM_ELEMENTS_TO_SHOW", "100"))
+        
+        # Create actionable elements map with reasoning
+        action_map = []
+        for element in self.elements[:max_show]:
+            reasoning = element.get_action_reasoning()
+            element_str = element.to_string()
+            action_map.append(f"{element_str}\n   → Action: {reasoning}")
+        
+        action_map_str = "\n".join(action_map)
+        
+        # Add summary if there are more elements
+        summary = ""
+        if len(self.elements) > max_show:
+            summary = f"\n... and {len(self.elements) - max_show} more elements (showing first {max_show} of {len(self.elements)} total)"
+        
+        # Count element types
+        buttons = sum(1 for e in self.elements if e.is_clickable)
+        inputs = sum(1 for e in self.elements if e.is_input)
+        links = sum(1 for e in self.elements if e.tag == 'a')
+        
+        # Truncate full DOM if too long
+        dom_preview = self.full_dom
+        if len(dom_preview) > 3000:
+            dom_preview = dom_preview[:3000] + "\n... (DOM truncated for brevity)"
+        
         return f"""Current Page:
 URL: {self.url}
 Title: {self.title}
 
-Interactive Elements:
-{elements_str}
+=== PAGE STRUCTURE (Full DOM) ===
+{dom_preview}
+
+=== ACTIONABLE ELEMENTS MAP ===
+Element Summary:
+- Total interactive elements: {len(self.elements)}
+- Buttons/Clickable: {buttons}
+- Input fields: {inputs}
+- Links: {links}
+
+Action Map (What each element does):
+{action_map_str}{summary}
 """
 
 class AgentAction(BaseModel):
@@ -176,75 +308,20 @@ class BrowserController:
             logger.error(f"Navigation failed: {e}")
             return False
     
-    async def extract_dom(self) -> List[DOMElement]:
-        """Extract interactive elements from DOM using JavaScript"""
+    async def extract_dom(self) -> Tuple[List[DOMElement], str]:
+        """Extract both full DOM structure and interactive elements"""
         
-        # JavaScript to extract interactive elements
-        js_code = """
-        () => {
-            const elements = [];
-            let index = 1;
-            
-            // Find all potentially interactive elements
-            const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [onclick]';
-            const allElements = document.querySelectorAll(selectors);
-            
-            for (const el of allElements) {
-                // Skip invisible elements
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-                    continue;
-                }
-                
-                // Get element info
-                const rect = el.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) continue;
-                
-                // Generate XPath
-                function getXPath(element) {
-                    if (element.id) return `//*[@id="${element.id}"]`;
-                    if (element === document.body) return '/html/body';
-                    
-                    let ix = 0;
-                    const siblings = element.parentNode.childNodes;
-                    for (let i = 0; i < siblings.length; i++) {
-                        const sibling = siblings[i];
-                        if (sibling === element) {
-                            return getXPath(element.parentNode) + '/' + element.tagName.toLowerCase() + '[' + (ix + 1) + ']';
-                        }
-                        if (sibling.nodeType === 1 && sibling.tagName === element.tagName) {
-                            ix++;
-                        }
-                    }
-                }
-                
-                elements.push({
-                    index: index++,
-                    tag: el.tagName.toLowerCase(),
-                    text: el.innerText || el.value || el.placeholder || '',
-                    attributes: {
-                        id: el.id || '',
-                        class: el.className || '',
-                        href: el.href || '',
-                        type: el.type || '',
-                        placeholder: el.placeholder || '',
-                        value: el.value || ''
-                    },
-                    xpath: getXPath(el),
-                    is_visible: true,
-                    is_clickable: el.tagName === 'BUTTON' || el.tagName === 'A' || el.role === 'button',
-                    is_input: el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
-                });
-                
-                if (elements.length >= """ + str(MAX_ELEMENTS) + """) break;
-            }
-            
-            return elements;
-        }
-        """
+        # Load JavaScript code from file
+        js_file = Path(__file__).parent / "prompts" / "dom_extraction.js"
+        js_template = js_file.read_text()
+        # Replace MAX_ELEMENTS placeholder in the JavaScript
+        js_code = js_template.replace('MAX_ELEMENTS', str(MAX_ELEMENTS))
         
         try:
-            elements_data = await self.page.evaluate(js_code)
+            result = await self.page.evaluate(js_code)
+            elements_data = result['elements']
+            full_dom = result['fullDOM']
+            
             elements = []
             self.element_map = {}
             
@@ -257,29 +334,31 @@ class BrowserController:
                     xpath=elem_data['xpath'],
                     is_visible=elem_data['is_visible'],
                     is_clickable=elem_data['is_clickable'],
-                    is_input=elem_data['is_input']
+                    is_input=elem_data['is_input'],
+                    parent_text=elem_data.get('parent_text', ''),
+                    aria_label=elem_data.get('aria_label', '')
                 )
                 elements.append(element)
                 self.element_map[element.index] = element
             
-            logger.debug(f"Extracted {len(elements)} DOM elements")
-            return elements
+            logger.debug(f"Extracted {len(elements)} DOM elements and {len(full_dom)} chars of DOM structure")
+            return elements, full_dom
             
         except Exception as e:
             logger.error(f"DOM extraction failed: {e}")
-            return []
+            return [], ""
     
     async def get_state(self) -> BrowserState:
         """Get current browser state"""
         url = self.page.url
         title = await self.page.title()
-        elements = await self.extract_dom()
+        elements, full_dom = await self.extract_dom()
         
         # Optionally capture screenshot
         screenshot = None
         # screenshot = await self.page.screenshot()
         
-        return BrowserState(url=url, title=title, elements=elements, screenshot=screenshot)
+        return BrowserState(url=url, title=title, elements=elements, full_dom=full_dom, screenshot=screenshot)
     
     async def click_element(self, index: int) -> bool:
         """Click element by index"""
@@ -351,7 +430,7 @@ class BrowserController:
 # ============================================================================
 
 class LLMReasoner:
-    """Handles LLM interactions using ollama or groq"""
+    """Handles LLM interactions using ollama or groq with Langfuse tracing"""
     
     def __init__(self, model: str = MODEL_NAME, provider: str = LLM_PROVIDER):
         self.provider = provider
@@ -359,52 +438,64 @@ class LLMReasoner:
         if provider == "groq":
             if not GROQ_API_KEY:
                 raise ValueError("GROQ_API_KEY not found in environment variables")
-            self.client = Groq(api_key=GROQ_API_KEY)
+            
+            # Use Langfuse OpenAI wrapper for Groq (compatible with OpenAI format)
+            if langfuse_enabled:
+                self.client = langfuse_openai.OpenAI(
+                    base_url="https://api.groq.com/openai/v1",
+                    api_key=GROQ_API_KEY
+                )
+                self.using_langfuse = True
+            else:
+                self.client = Groq(api_key=GROQ_API_KEY)
+                self.using_langfuse = False
+            
             # Map model name to Groq model format
             self.model = GROQ_MODEL_MAP.get(model, model)
-            logger.info(f"Using Groq with model: {self.model}")
+            logger.info(f"Using Groq with model: {self.model} (Langfuse: {self.using_langfuse})")
         else:
             self.client = ollama.Client(host=OLLAMA_HOST)
             self.model = model  # Ollama uses model names directly
+            self.using_langfuse = False
             logger.info(f"Using Ollama with model: {self.model}")
     
     def create_system_prompt(self) -> str:
         """Create system prompt for the agent"""
-        return """You are a browser automation agent. Your job is to complete web tasks by interacting with web pages.
-
-You can perform these actions:
-- navigate: Go to a URL
-- click: Click on an element (specify element_index)
-- type: Type text into an input field (specify element_index and value)
-- scroll: Scroll the page up or down
-- extract: Extract information from the page
-- wait: Wait for page to load
-- done: Task is complete
-
-Always think step-by-step about what you need to do next. Be specific and precise.
-
-Output your response as JSON with these fields:
-{
-    "reasoning": "Your step-by-step thinking about what to do next",
-    "action": "navigate|click|type|scroll|extract|wait|done",
-    "element_index": null or element number,
-    "value": null or text to type/extract
-}"""
+        # Load system prompt from file
+        prompt_file = Path(__file__).parent / "prompts" / "system_prompt.pmpt.tpl"
+        return prompt_file.read_text()
     
-    async def decide_action(self, task: str, state: BrowserState, history: List[str]) -> AgentAction:
+    async def decide_action(self, task: str, state: BrowserState, history: List[str], trace_metadata: Optional[Dict[str, Any]] = None) -> AgentAction:
         """Decide next action based on current state"""
         
         # Build context
         history_str = "\n".join(history[-5:]) if history else "No previous actions"
         
-        prompt = f"""Task: {task}
-
-{state.to_prompt_string()}
-
-Previous Actions:
-{history_str}
-
-What should I do next? Respond with JSON."""
+        # Get the DOM representation that will be sent to LLM
+        dom_representation = state.to_prompt_string()
+        
+        # Log the DOM that the AI sees
+        logger.info("=== DOM SENT TO LLM ===")
+        logger.info(dom_representation)
+        logger.info("=== END DOM ===")
+        
+        # Optionally save to file
+        if os.getenv("SAVE_DOM_TO_FILE", "false").lower() == "true":
+            dom_file = Path(f"dom_snapshot_{int(time.time())}.txt")
+            with open(dom_file, 'w') as f:
+                f.write(f"Task: {task}\n\n")
+                f.write(dom_representation)
+                f.write(f"\n\nPrevious Actions:\n{history_str}")
+            logger.info(f"DOM snapshot saved to {dom_file}")
+        
+        # Load user prompt template from file
+        template_file = Path(__file__).parent / "prompts" / "user_prompt_template.md"
+        template = template_file.read_text()
+        prompt = template.format(
+            task=task,
+            dom_representation=dom_representation,
+            history_str=history_str
+        )
         
         try:
             if self.provider == "groq":
@@ -414,14 +505,38 @@ What should I do next? Respond with JSON."""
                     {"role": "user", "content": prompt}
                 ]
                 
-                completion = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=0.7,
-                    max_completion_tokens=1024,
-                    top_p=1,
-                    response_format={"type": "json_object"}  # Groq JSON mode
-                )
+                # Prepare metadata for Langfuse tracing
+                metadata = {
+                    "task": task[:100],  # Truncate for metadata
+                    "current_url": state.url,
+                    "history_length": len(history),
+                    "dom_elements_count": len(state.elements)
+                }
+                if trace_metadata:
+                    metadata.update(trace_metadata)
+                
+                if self.using_langfuse:
+                    # Use Langfuse-wrapped client with tracing
+                    completion = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=1024,
+                        top_p=1,
+                        response_format={"type": "json_object"},
+                        name="browser_action_decision",
+                        metadata=metadata
+                    )
+                else:
+                    # Fallback to regular Groq client
+                    completion = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        temperature=0.7,
+                        max_completion_tokens=1024,
+                        top_p=1,
+                        response_format={"type": "json_object"}
+                    )
                 
                 # Extract response
                 result = json.loads(completion.choices[0].message.content)
@@ -461,17 +576,42 @@ What should I do next? Respond with JSON."""
 class BrowserAgent:
     """Main browser automation agent"""
     
-    def __init__(self, task: str):
+    def __init__(self, task: str, enable_detailed_logging: bool = False, log_base_dir: Optional[str] = None, 
+                 trace_id: Optional[str] = None, session_id: Optional[str] = None, user_id: Optional[str] = None):
         self.task = task
         self.browser = BrowserController()
         self.llm = LLMReasoner()
         self.history: List[str] = []
         self.step_count = 0
+        self.enable_detailed_logging = enable_detailed_logging
+        self.log_base_dir = Path(log_base_dir) if log_base_dir else None
+        self.log_file = None
+        
+        # Langfuse trace metadata
+        self.trace_id = trace_id
+        self.session_id = session_id
+        self.user_id = user_id
+        self.trace = bool(trace_id)  # Flag to indicate if tracing is enabled
+        
+        # Create log file if detailed logging is enabled (fallback)
+        if self.enable_detailed_logging and self.log_base_dir:
+            self.log_base_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            self.log_file = self.log_base_dir / f"task_{timestamp}.log"
+            self._log_detailed(f"Task initialized: {task}")
+    
+    def _log_detailed(self, message: str, metadata: Optional[Dict[str, Any]] = None):
+        """Write to detailed log file"""
+        if self.log_file:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(self.log_file, 'a') as f:
+                f.write(f"[{timestamp}] {message}\n")
     
     async def run(self, start_url: Optional[str] = None) -> Dict[str, Any]:
         """Run the agent to complete the task"""
         
         logger.info(f"Starting task: {self.task}")
+        self._log_detailed(f"Starting task execution with URL: {start_url}")
         
         # Start browser
         await self.browser.start()
@@ -500,9 +640,20 @@ class BrowserAgent:
                 # Get current state
                 state = await self.browser.get_state()
                 logger.debug(f"Current URL: {state.url}")
+                self._log_detailed(f"Step {self.step_count} - Current URL: {state.url}, Title: {state.title[:50] if state.title else 'N/A'}..., Elements: {len(state.elements)}")
                 
                 # Decide action
-                action = await self.llm.decide_action(self.task, state, self.history)
+                trace_metadata = {
+                    "langfuse_session_id": self.session_id,
+                    "langfuse_user_id": self.user_id,
+                    "step_count": self.step_count
+                } if self.trace_id else None
+                
+                action = await self.llm.decide_action(self.task, state, self.history, trace_metadata)
+                self._log_detailed(
+                    f"Step {self.step_count} - Action decided: {action.action}, Reasoning: {action.reasoning[:100] if action.reasoning else 'N/A'}...",
+                    metadata={"action": action.action, "step": self.step_count}
+                )
                 
                 # Execute action
                 success = await self.execute_action(action, state)
@@ -515,10 +666,12 @@ class BrowserAgent:
                     history_entry += f" with value: {action.value[:50]}"
                 history_entry += f" - {'Success' if success else 'Failed'}"
                 self.history.append(history_entry)
+                self._log_detailed(f"Step {self.step_count} - Execution result: {history_entry}")
                 
                 # Check if done
                 if action.action == ActionType.DONE:
                     logger.info("Task completed!")
+                    self._log_detailed(f"Task completed successfully. Extracted data: {action.value[:200] if action.value else 'None'}...")
                     result["success"] = True
                     result["extracted_data"] = action.value
                     break
@@ -533,11 +686,16 @@ class BrowserAgent:
             
         except Exception as e:
             logger.error(f"Agent error: {e}")
+            self._log_detailed(f"Agent error occurred: {e}")
             result["error"] = str(e)
         
         finally:
             # Always close browser
             await self.browser.close()
+            self._log_detailed(
+                f"Task finished. Final state - Steps: {self.step_count}, Success: {result['success']}, Final URL: {result.get('final_url', 'N/A')}",
+                metadata={"final_steps": self.step_count, "success": result['success']}
+            )
         
         return result
     
@@ -593,7 +751,8 @@ async def main():
     
     # Example tasks
     tasks = [
-        ("Search for 'WebVoyager benchmark' on Google", "https://www.google.com"),
+        ("Find the pricing for the gpt oss 120b 128k on groq", "https://www.qroq.com"),
+
         # ("Find Python documentation", "https://www.python.org"),
         # ("Search for flights from NYC to SF", "https://www.google.com/travel/flights"),
     ]

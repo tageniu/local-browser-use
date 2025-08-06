@@ -25,7 +25,8 @@ class WebVoyagerRunner:
     """Orchestrates the execution of WebVoyager benchmark tasks"""
     
     def __init__(self, workers: int = 4, run_name: Optional[str] = None, 
-                 resume: bool = False, categories: Optional[List[str]] = None):
+                 resume: bool = False, categories: Optional[List[str]] = None,
+                 enable_detailed_logging: bool = True):
         self.workers = workers
         self.data_path = Path(__file__).parent / "data" / "patchedTasks.jsonl"
         
@@ -51,17 +52,24 @@ class WebVoyagerRunner:
         self.results_dir = Path(__file__).parent / "results" / self.run_name
         self.raw_results_dir = self.results_dir / "raw"
         self.aggregated_dir = self.results_dir / "aggregated"
+        self.detailed_logs_dir = self.results_dir / "detailed_logs"  # New directory for detailed logs
         
         # Create directories
         self.raw_results_dir.mkdir(parents=True, exist_ok=True)
         self.aggregated_dir.mkdir(parents=True, exist_ok=True)
+        self.detailed_logs_dir.mkdir(parents=True, exist_ok=True)  # Create detailed logs directory
         
         # Set attributes before saving metadata
         self.resume = resume
         self.categories = categories
+        self.enable_detailed_logging = enable_detailed_logging
         
         # Save metadata about the run (after setting attributes)
         self._save_run_metadata(model_name)
+        
+        # Log run info
+        print(f"[Runner] Run Name: {self.run_name}")
+        print(f"[Runner] Langfuse traces will be under session: {self.run_name}")
         
         # Track progress
         self.total_tasks = 0
@@ -110,7 +118,9 @@ class WebVoyagerRunner:
             "started_at": datetime.now().isoformat(),
             "started_at_pacific": datetime.now(pytz.timezone('America/Los_Angeles')).isoformat(),
             "categories": self.categories,
-            "resume": self.resume
+            "resume": self.resume,
+            "detailed_logging_enabled": self.enable_detailed_logging,
+            "langfuse_session": self.run_name
         }
         
         metadata_path = self.results_dir / "run_metadata.json"
@@ -154,8 +164,13 @@ class WebVoyagerRunner:
             str(Path(__file__).parent / "task_runner.py"),
             "--task-json", task_json,
             "--results-dir", str(self.raw_results_dir),
-            "--max-retries", "3"
+            "--max-retries", "3",
+            "--run-name", self.run_name  # Pass run name for Langfuse session ID
         ]
+        
+        # Add detailed logging arguments if enabled (fallback to file logging)
+        if self.enable_detailed_logging:
+            cmd.extend(["--detailed-logs-dir", str(self.detailed_logs_dir)])
         
         try:
             # Run task with overall timeout
@@ -291,6 +306,8 @@ class WebVoyagerRunner:
                 print(f"Success rate: {self.successful_tasks}/{self.completed_tasks} ({success_rate:.1f}%)")
                 print(f"Total elapsed time: {elapsed:.1f}s")
                 print(f"Average time per task: {elapsed/self.completed_tasks:.1f}s")
+                print(f"Langfuse Session: {self.run_name}")
+                print(f"View traces at: https://us.cloud.langfuse.com")
                 print(f"{'='*60}\n")
     
     def aggregate_results(self):
@@ -494,6 +511,8 @@ def main():
                        help='Specific categories to run (e.g., Allrecipes Amazon)')
     parser.add_argument('--limit', type=int,
                        help='Limit number of tasks to run (for testing)')
+    parser.add_argument('--disable-detailed-logging', action='store_true',
+                       help='Disable detailed action logging (enabled by default)')
     
     args = parser.parse_args()
     
@@ -502,7 +521,8 @@ def main():
         workers=args.workers,
         run_name=args.run_name,
         resume=args.resume,
-        categories=args.categories
+        categories=args.categories,
+        enable_detailed_logging=not args.disable_detailed_logging
     )
     
     # Run benchmark
