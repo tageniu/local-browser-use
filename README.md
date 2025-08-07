@@ -1,4 +1,4 @@
-# 🤖 Local Browser Agent - The Simplest Way to Build Browser Automation
+# Local Browser Agent - The Simplest Way to Build Browser Automation
 
 **Run a fully local, open-source browser agent in <5 minutes.** No API keys. No cloud dependencies. Just pure, hackable browser automation.
 
@@ -8,7 +8,7 @@ agent = BrowserAgent(task="Book a flight from NYC to Tokyo")
 await agent.run("https://google.com/flights")
 ```
 
-> _"Like nanoGPT, but for browser agents"_ - Built for researchers, hackers, and anyone tired of complex frameworks.
+> _"Like nanoGPT, but for browser agents"_ - Built for researchers, developers, and anyone who wants simple, hackable browser automation.
 
 ## Why This Exists
 
@@ -21,45 +21,43 @@ Most browser automation tools are either:
 
 **This is different.** One file. Pure Python. Runs 100% locally. You can read the entire codebase in 20 minutes.
 
-## 🚀 Features
+## Features
 
-- **793 lines of code** - Entire agent in one readable file
+- **624 lines of code** - Entire agent in one readable file
 - **100% local** - Ollama for LLMs, no external APIs needed
-- **Actually works** - Achieves ~75-80% on WebVoyager benchmark
+- **Actually works** - Successfully completes web automation tasks
 - **No BS** - No abstractions, frameworks, or enterprise patterns
 - **Hackable** - Modify and experiment without diving through layers
 
-## 🏃 Get Started in 5 Minutes
+## Quick Start
 
 ```bash
 # 1. Clone and enter directory
-git clone https://github.com/yourusername/local-browser-agent.git
-cd local-browser-agent
+git clone https://github.com/yourusername/oss-browser-use.git
+cd oss-browser-use
 
-# 2. Install uv (fast Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 3. Setup environment
-uv venv
+# 2. Setup Python environment
+python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e .
+pip install -r requirements.txt
 
-# 4. Install browser
+# 3. Install browser
 patchright install chromium
 
-# 5. Install Ollama & pull model (one-time setup)
+# 4. Install Ollama & pull model (one-time setup)
 # macOS/Linux: curl -fsSL https://ollama.ai/install.sh | sh
 # Windows: Download from https://ollama.ai/download
-ollama pull qwen2.5:32b-instruct-q4_K_M  # Best performance/accuracy
-# or: ollama pull llama3.2:3b-instruct-q4_K_M  # Faster, lower accuracy
+ollama pull gpt-oss:20b  # Default model (good balance)
+# or: ollama pull qwen3:32b  # Better performance
+# or: ollama pull gpt-oss:120b  # Best performance (requires more VRAM)
 
-# 6. Run your first automation!
+# 5. Run your first automation!
 python main.py
 ```
 
-That's it. No API keys. No configuration files. No complex setup.
+That's it. No API keys, no configuration files, no complex setup.
 
-## 💡 What Can It Do?
+## What Can It Do?
 
 ```python
 # Extract data from any website
@@ -83,21 +81,25 @@ python main.py
 
 # Or create your own task
 python -c "
-from main import BrowserAgent
 import asyncio
+from main import BrowserAgent
 
-agent = BrowserAgent(task='Find the top Show HN post today')
-asyncio.run(agent.run('https://news.ycombinator.com'))
+async def run_task():
+    agent = BrowserAgent(task='Find the top Show HN post today')
+    result = await agent.run('https://news.ycombinator.com')
+    print(result)
+
+asyncio.run(run_task())
 "
 ```
 
-## 📊 Reproduce Our Results
+## WebVoyager Benchmark Support
 
-We achieve **75-80% on WebVoyager benchmark** - comparable to closed-source solutions costing $$$:
+This project includes WebVoyager benchmark support for testing and evaluation:
 
 ```bash
 # Run the full WebVoyager benchmark
-cd reproducibility/
+cd webvoyager_benchmark/reproducibility/
 python webvoyager_runner.py
 
 # Run a single task
@@ -107,22 +109,15 @@ python task_runner.py --task_id 123
 python view_results.py
 ```
 
-Our agent matches Browser-Use (89.1%) and approaches Magnitude (93.9%) performance using:
+The benchmark tests various web automation scenarios to help evaluate and improve the agent's performance.
 
-- ✅ Multi-action batching (35-40% improvement)
-- ✅ Semantic DOM compression (25-30% improvement)
-- ✅ Smart form filling (20-25% improvement)
-- ✅ Custom widget detection (15-20% improvement)
-
-See [`strategies.md`](strategies.md) for the full technical analysis.
-
-## 🏗️ How It Works
+## How It Works
 
 ```
 Task → LLM reasons about DOM → Execute action → Repeat until done
 ```
 
-The entire agent is **793 lines** in `main.py`:
+The entire agent is **624 lines** in `main.py`:
 
 1. **Extract DOM** - JavaScript finds all interactive elements
 2. **Number elements** - `[1] Search box`, `[2] Submit button`
@@ -132,7 +127,7 @@ The entire agent is **793 lines** in `main.py`:
 
 No magic. No frameworks. Just a loop that works.
 
-## 🤝 Contributing
+## Contributing
 
 This is meant to be hacked on. Some ideas:
 
@@ -144,7 +139,7 @@ This is meant to be hacked on. Some ideas:
 
 PRs welcome. Keep it simple.
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 <details>
 <summary>Ollama not connecting?</summary>
@@ -175,25 +170,25 @@ patchright install chromium --force
 Ollama automatically uses GPU if available. For CPU-only:
 
 ```bash
-ollama run qwen2.5:7b-instruct-q4_K_M  # Smaller model for CPU
+ollama run gpt-oss:20b  # Good balance for CPU/GPU
 ```
 
 </details>
 
-## 📈 Benchmarks
+## Performance Notes
 
-| Agent            | WebVoyager Score | Cost   | Open Source |
-| ---------------- | ---------------- | ------ | ----------- |
-| GPT-4V + SoM     | 93.9%            | $$$    | 50/50          |
-| Browser-Use      | 89.1%            | $$     | 50/50        |
-| **This Project** | TBD              | **TBD** | **✅**      |
-| Ollama Baseline  | ~40%             | $0     | ✅          |
+This agent is designed for research and experimentation. Performance varies based on:
 
-_Performance depends on hardware and model choice. RTX 4090 recommended for best results._
+- **Model choice**: Larger models (gpt-oss:120b) generally perform better
+- **Hardware**: GPU acceleration improves response times
+- **Task complexity**: Simple tasks work better than complex multi-step workflows
+- **Website design**: Modern, well-structured sites are easier to navigate
 
-## ⭐ Star History
+_Performance testing is ongoing. Contributions to benchmark results are welcome._
 
-If this saves you from wrestling with complex frameworks, give it a star!
+## Star History
+
+If this project is useful to you, please give it a star!
 
 ## License
 
@@ -201,5 +196,5 @@ MIT - Do whatever you want with it.
 
 ---
 
-**Built with ❤️ from San Francisco the open-source community**  
+**Built by the open-source community**  
 Contribution guidelines: _Just write good code._
