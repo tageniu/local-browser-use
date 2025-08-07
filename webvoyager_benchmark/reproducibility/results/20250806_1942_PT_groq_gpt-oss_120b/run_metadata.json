@@ -1,0 +1,11 @@
+{
+  "run_name": "20250806_1942_PT_groq_gpt-oss_120b",
+  "model": "groq_gpt-oss:120b",
+  "workers": 1,
+  "started_at": "2025-08-06T19:42:54.662778",
+  "started_at_pacific": "2025-08-06T19:42:54.662788-07:00",
+  "categories": null,
+  "resume": false,
+  "detailed_logging_enabled": true,
+  "langfuse_session": "20250806_1942_PT_groq_gpt-oss_120b"
+}

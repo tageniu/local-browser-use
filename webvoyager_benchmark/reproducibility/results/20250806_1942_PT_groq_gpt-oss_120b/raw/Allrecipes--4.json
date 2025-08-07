@@ -1,0 +1,18 @@
+{
+  "task_id": "Allrecipes--4",
+  "web_name": "Allrecipes",
+  "question": "Find a recipe for Baked Salmon that takes less than 30 minutes to prepare and has at least a 4 star rating based on user reviews.",
+  "start_url": "https://www.allrecipes.com/",
+  "success": false,
+  "time_seconds": 0.34363484382629395,
+  "steps_taken": 0,
+  "retries": 2,
+  "error": "Could not parse output. Stderr: Traceback (most recent call last):\n  File \"/var/folders/q3/3rdwvm8s05qg9qvy66c55s9r0000gn/T/tmpa1smwyih.py\", line 7, in <module>\n    import main as original_main\n  File \"/Users/adamcohenhillel/Developer/oss-browser-use/jan/main.py\", line 24, in <module>\n    from langfuse.openai import openai as langfuse_openai\nModuleNotFoundError: No module named 'langfuse'\n",
+  "final_url": null,
+  "answer_provided": null,
+  "browser_grounded": false,
+  "timestamp": "2025-08-06 19:43:10",
+  "crashed": true,
+  "timeout": false,
+  "failure_reason": null
+}
