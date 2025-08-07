@@ -33,16 +33,16 @@ Most browser automation tools are either:
 
 ```bash
 # 1. Clone and enter directory
-git clone https://github.com/yourusername/oss-browser-use.git
-cd oss-browser-use
+git clone https://github.com/tageniu/local-browser-use.git
+cd local-browser-use
 
 # 2. Setup Python environment
-python -m venv .venv
+uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # 3. Install browser
-patchright install chromium
+patchright install chromium --with-deps --no-shell
 
 # 4. Install Ollama & pull model (one-time setup)
 # macOS/Linux: curl -fsSL https://ollama.ai/install.sh | sh
