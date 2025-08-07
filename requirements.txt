@@ -1,16 +1,6 @@
 patchright>=1.52.0
 ollama>=0.4.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
-Pillow>=10.0.0
 pydantic>=2.0.0
-orjson>=3.9.0
 loguru>=0.7.0
 python-dotenv>=1.0.0
-groq==0.31.0
 requests==2.32.4
-
-# optional for vision    
-mlx-vlm==0.3.2
-torch==2.7.1
-torchvision==0.22.1
